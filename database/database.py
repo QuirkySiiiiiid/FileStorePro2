@@ -2,17 +2,15 @@ import motor.motor_asyncio
 from config import DB_URI, DB_NAME
 from pymongo.errors import PyMongoError
 
-# Single persistent connection (Singleton Pattern)
+# Initialize MongoDB client
 dbclient = motor.motor_asyncio.AsyncIOMotorClient(DB_URI)
 database = dbclient[DB_NAME]
 
+# Collection reference
 user_data = database['users']
 
-# Indexing _id for faster lookup
-user_data.create_index([('_id', 1)], unique=True)
-
 # Default verification status
-default_verify = {
+DEFAULT_VERIFY = {
     'is_verified': False,
     'verified_time': 0,
     'verify_token': "",
@@ -20,61 +18,55 @@ default_verify = {
 }
 
 # Function to create a new user entry
-def new_user(id):
+def new_user(user_id: int):
     return {
-        '_id': id,
-        'verify_status': default_verify
+        '_id': user_id,
+        'verify_status': DEFAULT_VERIFY
     }
 
-# Check if the user already exists
-async def present_user(user_id: int):
+# Check if a user exists in the database
+async def is_user_present(user_id: int) -> bool:
     try:
-        found = await user_data.find_one({'_id': user_id})
-        return bool(found)
+        return await user_data.find_one({'_id': user_id}) is not None
     except PyMongoError as e:
-        print(f"Error checking user: {e}")
+        print(f"[ERROR] Checking user existence: {e}")
         return False
 
-# Add a new user, using upsert to avoid duplicates
+# Add a new user with upsert
 async def add_user(user_id: int):
     try:
         user = new_user(user_id)
-        # Use upsert to add or update the user in one call
-        await user_data.update_one({'_id': user_id}, {'$set': user}, upsert=True)
+        await user_data.update_one({'_id': user_id}, {'$setOnInsert': user}, upsert=True)
     except PyMongoError as e:
-        print(f"Error adding user: {e}")
+        print(f"[ERROR] Adding user: {e}")
 
-# Get verification status for a user
-async def db_verify_status(user_id):
+# Get a user's verification status
+async def get_verify_status(user_id: int):
     try:
-        user = await user_data.find_one({'_id': user_id})
-        if user:
-            return user.get('verify_status', default_verify)
-        return default_verify
+        user = await user_data.find_one({'_id': user_id}, {'verify_status': 1})
+        return user.get('verify_status', DEFAULT_VERIFY) if user else DEFAULT_VERIFY
     except PyMongoError as e:
-        print(f"Error retrieving verify status: {e}")
-        return default_verify
+        print(f"[ERROR] Retrieving verification status: {e}")
+        return DEFAULT_VERIFY
 
-# Update verification status
-async def db_update_verify_status(user_id, verify):
+# Update a user's verification status
+async def update_verify_status(user_id: int, verify_status: dict):
     try:
-        await user_data.update_one({'_id': user_id}, {'$set': {'verify_status': verify}})
+        await user_data.update_one({'_id': user_id}, {'$set': {'verify_status': verify_status}})
     except PyMongoError as e:
-        print(f"Error updating verify status: {e}")
+        print(f"[ERROR] Updating verification status: {e}")
 
 # Get all user IDs in the database
-async def full_userbase():
+async def get_all_users():
     try:
-        user_docs = user_data.find()
-        user_ids = [doc['_id'] async for doc in user_docs]
-        return user_ids
+        return [doc['_id'] async for doc in user_data.find({}, {'_id': 1})]
     except PyMongoError as e:
-        print(f"Error retrieving userbase: {e}")
+        print(f"[ERROR] Retrieving all users: {e}")
         return []
 
 # Delete a user from the database
-async def del_user(user_id: int):
+async def delete_user(user_id: int):
     try:
         await user_data.delete_one({'_id': user_id})
     except PyMongoError as e:
-        print(f"Error deleting user: {e}")
+        print(f"[ERROR] Deleting user: {e}")
