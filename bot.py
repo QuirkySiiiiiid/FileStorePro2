@@ -1,18 +1,20 @@
-from aiohttp import web
-from plugins import web_server
 import asyncio
+import logging
+import sys
+import os
+from aiohttp import web
+from datetime import datetime
 import pyromod.listen
 from pyrogram import Client
 from pyrogram.enums import ParseMode
-import sys
-from datetime import datetime
-#rohit_1888 on Tg
+from plugins import web_server
 from config import *
 
+# Logging setup
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
-name ="""
- BY CODEFLIX BOTS
-"""
+# Set port for web server
+PORT = int(os.getenv("PORT", 8080))  # Default to 8080 if not set
 
 
 class Bot(Client):
@@ -22,17 +24,16 @@ class Bot(Client):
             name="FileStore",
             api_hash=API_HASH,
             api_id=APP_ID,
-            plugins={
-                "root": "plugins"
-            },
+            plugins={"root": "plugins"},
             workers=TG_BOT_WORKERS,
-            bot_token=TG_BOT_TOKEN
+            bot_token=TG_BOT_TOKEN,
+            parse_mode=ParseMode.HTML
         )
-        self.LOGGER = LOGGER
+        self.LOGGER = logging
         self.start_time = datetime.now()
 
     async def start(self):
-        """Start the bot and initialize required variables"""
+        """Start the bot and initialize required components"""
         await super().start()
         self.me = await self.get_me()
         self.username = self.me.username
@@ -40,13 +41,13 @@ class Bot(Client):
 
         # Initialize force sub channels
         await self.init_force_sub_channels()
-        
+
         # Initialize database channel
         await self.init_db_channel()
-        
+
         # Start web server
-        await self.start_web_server()
-        
+        asyncio.create_task(self.start_web_server())
+
         # Send startup notification
         try:
             await self.send_message(
@@ -56,60 +57,57 @@ class Bot(Client):
                 f"<b>Support:</b> @cosmic_freak"
             )
         except Exception as e:
-            self.LOGGER(__name__).warning(f"Failed to send startup notification: {e}")
+            self.LOGGER.warning(f"Failed to send startup notification: {e}")
 
     async def init_force_sub_channels(self):
-        """Initialize force sub channels and their invite links"""
-        channels = [
-            (FORCE_SUB_CHANNEL1, 'invitelink1'),
-            (FORCE_SUB_CHANNEL2, 'invitelink2'),
-            (FORCE_SUB_CHANNEL3, 'invitelink3'),
-            (FORCE_SUB_CHANNEL4, 'invitelink4')
-        ]
-        
-        for channel_id, attr_name in channels:
+        """Initialize force subscription channels and their invite links"""
+        force_sub_channels = [FORCE_SUB_CHANNEL1, FORCE_SUB_CHANNEL2, FORCE_SUB_CHANNEL3, FORCE_SUB_CHANNEL4]
+        self.force_sub_links = {}
+
+        for channel_id in force_sub_channels:
             if channel_id:
                 try:
                     chat = await self.get_chat(channel_id)
                     invite_link = chat.invite_link or await self.export_chat_invite_link(channel_id)
-                    setattr(self, attr_name, invite_link)
+                    self.force_sub_links[channel_id] = invite_link
                 except Exception as e:
-                    self.LOGGER(__name__).error(f"Error initializing force sub channel {channel_id}: {e}")
-                    sys.exit(1)
+                    self.LOGGER.error(f"Error initializing force sub channel {channel_id}: {e}")
 
     async def init_db_channel(self):
-        """Initialize database channel"""
+        """Initialize database channel and check if bot has permission to send messages"""
         try:
             channel = await self.get_chat(CHANNEL_ID)
             self.db_channel = channel
-            test = await self.send_message(channel.id, "Test Message")
-            await test.delete()
+            test_message = await self.send_message(channel.id, "Test Message")
+            await test_message.delete()
         except Exception as e:
-            self.LOGGER(__name__).error(f"Error initializing DB channel: {e}")
-            sys.exit(1)
+            self.LOGGER.error(f"Error initializing DB channel: {e}")
 
     async def start_web_server(self):
-        """Start the web server for health checks"""
-        app = web.AppRunner(await web_server())
-        await app.setup()
-        await web.TCPSite(app, "0.0.0.0", PORT).start()
+        """Start a simple web server for health checks"""
+        try:
+            app = web.AppRunner(await web_server())
+            await app.setup()
+            site = web.TCPSite(app, "0.0.0.0", PORT)
+            await site.start()
+            self.LOGGER.info(f"✅ Web server started on port {PORT}")
+        except Exception as e:
+            self.LOGGER.error(f"❌ Web server failed to start: {e}")
 
     async def stop(self, *args):
         """Stop the bot gracefully"""
         await super().stop()
-        self.LOGGER(__name__).info("Bot stopped.")
+        self.LOGGER.info("Bot stopped.")
 
     def run(self):
         """Run the bot with proper error handling"""
-        self.LOGGER(__name__).info("Starting bot...")
+        self.LOGGER.info("Starting bot...")
         try:
             loop = asyncio.get_event_loop()
             loop.run_until_complete(self.start())
             loop.run_forever()
         except KeyboardInterrupt:
-            self.LOGGER(__name__).info("Stopping bot...")
+            self.LOGGER.info("Stopping bot...")
         finally:
             loop.run_until_complete(self.stop())
-            self.LOGGER(__name__).info("Bot stopped successfully!")
-
-     #@rohit_1888 on Tg
+            self.LOGGER.info("Bot stopped successfully!")
